@@ -14,21 +14,18 @@ from dotenv import load_dotenv
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Setup professional logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
-# Verify token existence
 if not BOT_TOKEN:
     exit("Error: BOT_TOKEN not found in environment variables.")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Output directory for temporary files
 DOWNLOAD_DIR = "downloads"
 
 # --- YouTube Downloader Settings ---
@@ -53,15 +50,10 @@ YDL_DOWNLOAD_OPTIONS = {
 # --- Core Functions ---
 
 async def search_youtube(query: str) -> Optional[Dict[str, Any]]:
-    """
-    Search for a video on YouTube and return metadata.
-    Returns None if no results found or on error.
-    """
+    """Search for a video on YouTube and return metadata."""
     with yt_dlp.YoutubeDL(YDL_SEARCH_OPTIONS) as ydl:
         try:
-            # Use ytsearch1 prefix to get the top result
             result = await asyncio.to_thread(ydl.extract_info, f"ytsearch1:{query}", download=False)
-            
             if not result or 'entries' not in result or not result['entries']:
                 return None
             
@@ -94,10 +86,12 @@ async def search_handler(message: types.Message):
     
     if track and track.get('id'):
         builder = InlineKeyboardBuilder()
-        builder.row(types.InlineKeyboardButton(
-            text="📥 Download MP3", 
-            callback_data=f"dl_{track['id']}")
-        )
+        # Button to download
+        builder.button(text="📥 Download MP3", callback_data=f"dl_{track['id']}")
+        # Button to cancel
+        builder.button(text="❌ No, thanks", callback_data="cancel_search")
+        # Align buttons (one per row)
+        builder.adjust(1)
         
         response_text = (
             f"✅ <b>Found:</b> {track['title']}\n"
@@ -115,9 +109,15 @@ async def search_handler(message: types.Message):
 
 # --- Callback Handlers ---
 
+@dp.callback_query(F.data == "cancel_search")
+async def cancel_callback(callback: types.CallbackQuery):
+    """Handles the 'No, thanks' button click."""
+    await callback.answer("Search cancelled") # Small pop-up notification
+    await callback.message.edit_text("👌 No problem! Send me another track name whenever you're ready.")
+
 @dp.callback_query(F.data.startswith("dl_"))
 async def download_callback(callback: types.CallbackQuery):
-    """Processes MP3 download requests when the button is clicked."""
+    """Processes MP3 download requests."""
     video_id = callback.data.split("_")[1]
     url = f"https://www.youtube.com/watch?v={video_id}"
     
@@ -127,20 +127,16 @@ async def download_callback(callback: types.CallbackQuery):
         os.makedirs(DOWNLOAD_DIR)
 
     try:
-        # Download and convert using yt-dlp
         with yt_dlp.YoutubeDL(YDL_DOWNLOAD_OPTIONS) as ydl:
-            # Run blocking extract_info in a thread to keep bot responsive
             info = await asyncio.to_thread(ydl.extract_info, url, download=True)
             file_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + ".mp3"
             
-            # Send the file to user
             audio_file = FSInputFile(file_path)
             await callback.message.answer_audio(
                 audio_file, 
                 caption=f"🎶 {info.get('title', 'Your Music')}"
             )
             
-            # Cleanup: delete status message and local file
             await callback.message.delete()
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -152,7 +148,6 @@ async def download_callback(callback: types.CallbackQuery):
 # --- Main Entry Point ---
 
 async def main():
-    """Application entry point."""
     logger.info("Starting bot...")
     try:
         await dp.start_polling(bot)
